@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>World Tour: Soviet Update</title>
+    <style>
+        body { margin: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; background: #000; color: white; font-family: 'Courier New', Courier, monospace; overflow: hidden; }
+        canvas { border: 4px solid #fff; border-radius: 10px; box-shadow: 0 0 20px rgba(255,255,255,0.2); }
+        #ui { margin-bottom: 10px; font-size: 28px; font-weight: bold; text-transform: uppercase; letter-spacing: 2px; }
+        .stats { display: flex; gap: 20px; font-size: 16px; margin-bottom: 10px; background: rgba(255,255,255,0.1); padding: 8px 25px; border-radius: 30px; border: 1px solid rgba(255,255,255,0.2); }
+        .hint { margin-top: 5px; color: #888; font-size: 13px; }
+        #checkpointMsg { position: absolute; color: #ffff00; font-size: 40px; font-weight: bold; display: none; pointer-events: none; text-shadow: 2px 2px #000; z-index: 10; }
+    </style>
+</head>
+<body>
+    <div id="checkpointMsg">CHECKPOINT!</div>
+    <div id="ui">Level 1: Volcano</div>
+    <div class="stats">
+        <span>Skin: <span id="skinName" style="color:cyan;">Cyan</span></span>
+        <span>Score: <span id="scoreVal">0</span>/<span id="targetVal">25</span></span>
+        <span id="swimUI" style="display:none; color:cyan;">Air: <span id="airVal">3.0</span>s</span>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+    <div class="hint">SPACE: Jump/Restart | S: Change Skin | Level 10 & 11 Added!</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = 950; canvas.height = 500;
+
+let currentLevel = 1;
+let score = 0;
+let checkpointReached = false;
+let currentSpeed = 6.5;
+let isGameOver = false;
+let hasWon = false;
+let frameCount = 0;
+let swimTimer = 180;
+
+// Load Stalin Image for Level 10
+const stalinImg = new Image();
+stalinImg.src = 'https://wikimedia.org';
+
+const levels = {
+    1: { name: "Volcano", floor: "#ff4500", bg: "#1a0a00", hazard: "Lava", target: 25 },
+    2: { name: "Forest", floor: "#0077ff", bg: "#0a1a05", hazard: "Water", target: 25 },
+    3: { name: "Ice", floor: "#aaddff", bg: "#05101a", hazard: "Slippery Ice", target: 25 },
+    4: { name: "Desert", floor: "#e1ad21", bg: "#1a1505", hazard: "Quicksand", target: 25 },
+    5: { name: "Sky Kingdom", floor: "transparent", bg: "#87ceeb", hazard: "The Abyss", target: 40 },
+    6: { name: "Underwater", floor: "#00008b", bg: "#001a33", hazard: "Pufferfish", target: 40 },
+    7: { name: "Swamp", floor: "#2d3a1a", bg: "#0d1108", hazard: "Witch Magic", target: 40 },
+    8: { name: "Battlefield", floor: "#4b5320", bg: "#1a1a1a", hazard: "Landmines", target: 50 },
+    9: { name: "Final Void", floor: "#000", bg: "#000", hazard: "The Unknown", target: 60 },
+    10: { name: "Soviet Union", floor: "#8b0000", bg: "#4a0000", hazard: "Missiles", target: 70 },
+    11: { name: "The Moon", floor: "#888", bg: "#050505", hazard: "Satellites", target: 80 }
+};
+
+const skins = ['#00ffff', '#ff00ff', '#ffff00', '#00ff00', '#ffffff'];
+const skinNames = ['Cyan', 'Magenta', 'Yellow', 'Green', 'White'];
+let skinIdx = 0;
+
+const player = { x: 150, y: 300, w: 35, h: 35, dy: 0, jumpsUsed: 0, maxJumps: 4, rot: 0, onGround: false };
+let platforms = []; let hazards = []; let decorations = [];
+
+function resetLevel(isCheckpointLoad = false) {
+    const lvl = levels[currentLevel];
+    if (isCheckpointLoad && checkpointReached) {
+        score = Math.floor(lvl.target / 2);
+    } else {
+        score = 0;
+        checkpointReached = false;
+    }
+    
+    isGameOver = false; hasWon = false; frameCount = 0; swimTimer = 180; 
+    currentSpeed = 6.5 + (currentLevel * 0.4);
+    platforms = [{ x: 0, y: 440, w: 900, h: 60 }];
+    hazards = []; decorations = [];
+    player.y = 200; player.dy = 0; player.jumpsUsed = 0;
+    
+    document.getElementById('ui').innerText = `Level ${currentLevel}: ${lvl.name}`;
+    document.getElementById('targetVal').innerText = lvl.target;
+    document.getElementById('scoreVal').innerText = score;
+    document.getElementById('swimUI').style.display = (currentLevel === 2 || currentLevel === 6) ? "inline" : "none";
+}
+
+function showCheckpointUI() {
+    const msg = document.getElementById('checkpointMsg');
+    msg.style.display = 'block';
+    setTimeout(() => msg.style.display = 'none', 1500);
+}
+
+function update() {
+    if (isGameOver || hasWon) return;
+    frameCount++;
+    const lvl = levels[currentLevel];
+
+    if (!checkpointReached && score >= lvl.target / 2) {
+        checkpointReached = true;
+        showCheckpointUI();
+    }
+
+    let gravMult = (currentLevel === 5 || currentLevel === 11) ? 0.4 : (currentLevel === 6 ? 0.15 : 1);
+    player.dy += (0.45 * gravMult);
+    player.y += player.dy;
+    player.onGround = false;
+
+    // Floor Hazards
+    if (player.y + player.h >= 440) {
+        if ([1, 4, 7, 8, 9, 10].includes(currentLevel)) isGameOver = true;
+        if (currentLevel === 5 || currentLevel === 11) isGameOver = true; // Abyss death
+        if (currentLevel === 2 || currentLevel === 6) {
+            player.dy = -1.2; swimTimer--;
+            document.getElementById('airVal').innerText = (swimTimer/60).toFixed(1);
+            if (swimTimer <= 0) isGameOver = true;
+        }
+        if (currentLevel === 3) { player.y = 405; player.dy = 0; player.onGround = true; player.jumpsUsed = 0; player.x += 1; }
+    } else if (currentLevel === 2 || currentLevel === 6) {
+        swimTimer = 180;
+    }
+
+    platforms.forEach(p => {
+        p.x -= currentSpeed;
+        if (player.x < p.x + p.w && player.x + player.w > p.x && player.y + player.h > p.y && player.y + player.h < p.y + p.h + player.dy) {
+            player.y = p.y - player.h; player.dy = 0; player.jumpsUsed = 0; player.onGround = true;
+        }
+    });
+
+    decorations.forEach(d => d.x -= currentSpeed * 0.5);
+
+    hazards.forEach(h => {
+        h.x -= (currentSpeed + h.extraSpeed);
+        if (player.x < h.x + h.w && player.x + player.w > h.x && player.y < h.y + h.h && player.y + player.h > h.y) isGameOver = true;
+    });
+
+    if (frameCount % 40 === 0) {
+        score++; 
+        document.getElementById('scoreVal').innerText = score;
+        if (score >= lvl.target) hasWon = true;
+    }
+
+    let spawnRate = (currentLevel === 5) ? 35 : 75;
+    if (frameCount % spawnRate === 0) {
+        let pY = [200, 300, 380][Math.floor(Math.random()*3)];
+        let pW = (currentLevel === 5) ? 350 : 200;
+        platforms.push({ x: canvas.width, y: pY, w: pW, h: 20 });
+        
+        if (Math.random() > 0.4) {
+            let hY = pY - 30;
+            if (currentLevel === 6) hY = Math.random() * 400; 
+            if (currentLevel === 8 || currentLevel === 10) hY = 410; // Ground threats
+            if (currentLevel === 11) hY = Math.random() * 300;
+            
+            hazards.push({ 
+                x: canvas.width + 100, y: hY, 
+                w: (currentLevel === 10) ? 60 : 30, 
+                h: (currentLevel === 10) ? 20 : 30, 
+                extraSpeed: (currentLevel === 10) ? 4 : 2 
+            });
+        }
+        
+        if (currentLevel === 10 && Math.random() > 0.7) {
+            decorations.push({ x: canvas.width + 100, y: 50 + Math.random()*150, img: stalinImg });
+        }
+    }
+
+    if (!player.onGround) player.rot += 6;
+}
+
+function draw() {
+    const lvl = levels[currentLevel];
+    ctx.fillStyle = lvl.bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Decorations (Stalin Photos)
+    decorations.forEach(d => {
+        ctx.globalAlpha = 0.3;
+        ctx.drawImage(d.img, d.x, d.y, 80, 100);
+        ctx.globalAlpha = 1;
+    });
+
+    // Draw Floor
+    if (currentLevel !== 5 && currentLevel !== 11) {
+        ctx.fillStyle = lvl.floor; ctx.fillRect(0, 440, canvas.width, 60);
+    }
+
+    platforms.forEach(p => {
+        ctx.fillStyle = (currentLevel === 5) ? "#fff" : (currentLevel === 7 ? "#4a5d23" : "#ff8c00");
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+    });
+
+    hazards.forEach(h => {
+        if (currentLevel === 10) { // Drawing a missile
+            ctx.fillStyle = "gray"; ctx.fillRect(h.x, h.y, h.w, h.h);
+            ctx.fillStyle = "red"; ctx.beginPath(); ctx.moveTo(h.x, h.y); ctx.lineTo(h.x - 15, h.y + h.h/2); ctx.lineTo(h.x, h.y + h.h); ctx.fill();
+        } else {
+            ctx.fillStyle = (currentLevel === 6) ? "orange" : "red";
+            ctx.beginPath(); ctx.arc(h.x+h.w/2, h.y+h.h/2, h.w/2, 0, Math.PI*2); ctx.fill();
+        }
+    });
+
+    // Player
+    ctx.save(); ctx.translate(player.x+17, player.y+17); ctx.rotate(player.rot*Math.PI/180);
+    ctx.fillStyle = skins[skinIdx]; ctx.fillRect(-17, -17, 35, 35);
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.strokeRect(-17, -17, 35, 35); ctx.restore();
+
+    if (isGameOver) {
+        ctx.fillStyle = "rgba(0,0,0,0.85)"; ctx.fillRect(0,0,canvas.width, canvas.height);
+        ctx.fillStyle = "white"; ctx.textAlign = "center"; ctx.font = "bold 26px Arial";
+        ctx.fillText(`ELIMINATED BY ${lvl.hazard}`, canvas.width/2, canvas.height/2 - 20);
+        ctx.font = "18px Arial"; ctx.fillText(`[Space] to Restart`, canvas.width/2, canvas.height/2 + 30);
+    }
+    if (hasWon) {
+        ctx.fillStyle = "rgba(0,0,0,0.7)"; ctx.fillRect(0,0,canvas.width, canvas.height);
+        ctx.fillStyle = "#00ff00"; ctx.textAlign = "center"; ctx.font = "bold 32px Arial";
+        ctx.fillText(currentLevel < 11 ? "LEVEL CLEAR!" : "🏆 WORLD TOUR COMPLETE! 🏆", canvas.width/2, canvas.height/2 - 20);
+        ctx.fillStyle = "white"; ctx.font = "18px Arial"; ctx.fillText(`[Space] to Continue`, canvas.width/2, canvas.height/2 + 30);
+    }
+
+    update();
+    requestAnimationFrame(draw);
+}
+
+window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') {
+        if (isGameOver) resetLevel(true);
+        else if (hasWon) { currentLevel = (currentLevel < 11) ? currentLevel + 1 : 1; resetLevel(); }
+        else if (player.jumpsUsed < player.maxJumps) {
+            player.dy = -10.5; player.jumpsUsed++; player.onGround = false;
+        }
+    }
+    if (e.code === 'KeyS') {
+        skinIdx = (skinIdx + 1) % skins.length;
+        document.getElementById('skinName').innerText = skinNames[skinIdx];
+        document.getElementById('skinName').style.color = skins[skinIdx];
+    }
+});
+
+resetLevel();
+draw();
+</script>
+</body>
+</html>

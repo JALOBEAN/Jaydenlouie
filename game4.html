@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Geometry Dash: World Tour</title>
+    <style>
+        body { margin: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; background: #000; color: white; font-family: sans-serif; overflow: hidden; }
+        canvas { border: 4px solid #fff; border-radius: 10px; cursor: pointer; transition: 0.5s; }
+        #ui { margin-bottom: 10px; font-size: 24px; font-weight: bold; text-transform: uppercase; letter-spacing: 2px; }
+        .stats { display: flex; gap: 20px; font-size: 14px; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <div id="ui">Level 1: Volcano</div>
+    <div class="stats">
+        <span>Skin: <span id="skinName">Cyan</span></span>
+        <span>Score: <span id="scoreVal">0</span>/25</span>
+        <span id="swimUI" style="display:none; color:cyan;">Air: <span id="airVal">3.0</span>s</span>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = 950; canvas.height = 500;
+
+// Game Config
+const WIN_SCORE = 25;
+const GRAVITY = 0.45;
+const JUMP_FORCE = -10.5;
+let currentLevel = 1;
+let score = 0;
+let currentSpeed = 6.5;
+let isGameOver = false;
+let hasWon = false;
+let frameCount = 0;
+let lastFireworkTime = 0;
+let swimTimer = 180; // 3 seconds at 60fps
+
+const levels = {
+    1: { name: "Volcano", floor: "#ff4500", bg: "#1a0a00", hazard: "Lava" },
+    2: { name: "Forest", floor: "#0077ff", bg: "#0a1a05", hazard: "Water" },
+    3: { name: "Ice", floor: "#aaddff", bg: "#05101a", hazard: "Slippery Ice" },
+    4: { name: "Desert", floor: "#e1ad21", bg: "#1a1505", hazard: "Quicksand" }
+};
+
+const skins = ['#00ffff', '#ff00ff', '#ffff00', '#00ff00', '#ffffff'];
+let skinIdx = 0;
+const player = { x: 150, y: 300, w: 35, h: 35, dy: 0, jumpsUsed: 0, maxJumps: 4, rot: 0, onGround: false };
+let platforms = []; let monsters = []; let hills = []; let fireworks = [];
+
+function resetLevel() {
+    score = 0; isGameOver = false; hasWon = false; frameCount = 0;
+    swimTimer = 180; currentSpeed = 6.5 + (currentLevel * 0.5);
+    platforms = [{ x: 0, y: 440, w: 900, h: 60 }];
+    monsters = []; hills = []; fireworks = [];
+    player.y = 200; player.dy = 0; player.jumpsUsed = 0;
+    document.getElementById('ui').innerText = `Level ${currentLevel}: ${levels[currentLevel].name}`;
+    document.getElementById('swimUI').style.display = (currentLevel === 2) ? "inline" : "none";
+}
+
+function createFirework(x, y) {
+    for(let i=0; i<20; i++) {
+        fireworks.push({ x, y, vx: (Math.random()-0.5)*12, vy: (Math.random()-0.5)*12, life: 1, color: skins[skinIdx] });
+    }
+}
+
+function update() {
+    if (isGameOver) return;
+    frameCount++;
+
+    if (frameCount - lastFireworkTime > 180) {
+        createFirework(Math.random()*canvas.width, Math.random()*200 + 50);
+        lastFireworkTime = frameCount;
+    }
+
+    if (!hasWon) {
+        // Speed scaling every 5s
+        if (frameCount % 300 === 0) currentSpeed += 0.3;
+
+        player.dy += GRAVITY;
+        player.y += player.dy;
+        player.onGround = false;
+
+        // --- FLOOR MECHANICS ---
+        if (player.y + player.h >= 440) {
+            if (currentLevel === 1) isGameOver = true; // Lava: Death
+            if (currentLevel === 2) { // Water: Swim
+                player.dy = -1; // Buoyancy
+                swimTimer--;
+                document.getElementById('airVal').innerText = (swimTimer/60).toFixed(1);
+                if (swimTimer <= 0) isGameOver = true;
+            }
+            if (currentLevel === 3) { // Ice: Slippery (Speed Boost)
+                player.y = 440 - player.h; player.dy = 0; player.onGround = true; player.jumpsUsed = 0;
+                player.x += 1; // Slide forward slightly
+            }
+            if (currentLevel === 4) { // Quicksand: Sink
+                player.dy = 0.5;
+                if (player.y > 470) isGameOver = true;
+            }
+        } else if (currentLevel === 2) {
+            swimTimer = 180; // Reset air when out of water
+            document.getElementById('airVal').innerText = "3.0";
+        }
+
+        platforms.forEach(p => {
+            p.x -= currentSpeed;
+            if (player.x < p.x + p.w && player.x + player.w > p.x && player.y + player.h > p.y && player.y + player.h < p.y + p.h + player.dy) {
+                player.y = p.y - player.h; player.dy = 0; player.jumpsUsed = 0; player.onGround = true;
+            }
+        });
+
+        hills.forEach(h => {
+            h.x -= currentSpeed;
+            if (player.x + player.w > h.x && player.x < h.x + h.w) {
+                let relX = (player.x + player.w/2) - h.x;
+                let targetY = (relX < h.w/2) ? h.y - (relX/(h.w/2))*h.h : h.y - (1-(relX-h.w/2)/(h.w/2))*h.h;
+                if (player.y + player.h >= targetY && player.y + player.h <= targetY + 25) {
+                    player.y = targetY - player.h; player.dy = 0; player.jumpsUsed = 0; player.onGround = true;
+                }
+            }
+        });
+
+        monsters.forEach(m => {
+            m.x -= (currentSpeed + 2);
+            let dx = (player.x+17)-m.x; let dy = (player.y+17)-m.y;
+            if (Math.sqrt(dx*dx + dy*dy) < m.r + 14) isGameOver = true;
+        });
+
+        if (frameCount % 40 === 0) {
+            score++; 
+            document.getElementById('scoreVal').innerText = score;
+            if (score >= WIN_SCORE) hasWon = true;
+        }
+
+        if (frameCount % 85 === 0) {
+            let alt = [200, 300, 380][Math.floor(Math.random()*3)];
+            if (Math.random() > 0.4) {
+                platforms.push({ x: canvas.width, y: alt, w: 250, h: 20 });
+                if (Math.random() > 0.6) monsters.push({ x: canvas.width + 100, y: alt - 18, r: 18 });
+            } else {
+                hills.push({ x: canvas.width, y: 440, w: 400, h: 100 });
+            }
+        }
+    } else if (frameCount % 10 === 0) {
+        createFirework(Math.random()*canvas.width, Math.random()*250);
+    }
+
+    fireworks.forEach((p, i) => { p.x += p.vx; p.y += p.vy; p.life -= 0.02; if(p.life <= 0) fireworks.splice(i,1); });
+    if (!player.onGround) player.rot += 6;
+}
+
+function draw() {
+    let lvl = levels[currentLevel];
+    ctx.fillStyle = lvl.bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Floor Hazard
+    ctx.fillStyle = lvl.floor; ctx.fillRect(0, 440, canvas.width, 60);
+    if (currentLevel === 4) { // Quicksand dots
+        ctx.fillStyle = "rgba(0,0,0,0.2)";
+        for(let i=0; i<10; i++) ctx.fillRect((frameCount*2 + i*100)%canvas.width, 450, 10, 10);
+    }
+
+    ctx.fillStyle = (currentLevel === 2) ? "#228b22" : "#555";
+    hills.forEach(h => { ctx.beginPath(); ctx.moveTo(h.x,h.y); ctx.lineTo(h.x+h.w/2, h.y-h.h); ctx.lineTo(h.x+h.w, h.y); ctx.fill(); });
+    
+    ctx.fillStyle = (currentLevel === 3) ? "#fff" : "#ff8c00";
+    platforms.forEach(p => ctx.fillRect(p.x, p.y, p.w, p.h));
+    
+    monsters.forEach(m => { ctx.fillStyle = "#ff0000"; ctx.beginPath(); ctx.arc(m.x, m.y, m.r, 0, Math.PI*2); ctx.fill(); });
+
+    ctx.save(); ctx.translate(player.x+17, player.y+17); ctx.rotate(player.rot*Math.PI/180);
+    ctx.fillStyle = skins[skinIdx]; ctx.fillRect(-17, -17, 35, 35);
+    ctx.strokeStyle = "#fff"; ctx.strokeRect(-17, -17, 35, 35); ctx.restore();
+
+    fireworks.forEach(p => { ctx.globalAlpha = p.life; ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, 4, 4); });
+    ctx.globalAlpha = 1;
+
+    if (isGameOver) {
+        ctx.fillStyle = "rgba(0,0,0,0.8)"; ctx.fillRect(0,0,canvas.width, canvas.height);
+        ctx.fillStyle = "white"; ctx.textAlign = "center"; ctx.font = "25px Arial";
+        ctx.fillText(`Killed by ${lvl.hazard}! (Space to Retry)`, canvas.width/2, canvas.height/2);
+    }
+    if (hasWon) {
+        ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(0,0,canvas.width, canvas.height);
+        ctx.fillStyle = "#00ff00"; ctx.textAlign = "center"; ctx.font = "30px Arial";
+        if (currentLevel < 4) ctx.fillText("LEVEL CLEAR! (Space for Next)", canvas.width/2, canvas.height/2);
+        else ctx.fillText("🏆 YOU BEAT THE WORLD TOUR! 🏆", canvas.width/2, canvas.height/2);
+    }
+    update(); requestAnimationFrame(draw);
+}
+
+window.addEventListener('keydown', e => {
+    if (e.code === 'Space') {
+        if (isGameOver) resetLevel();
+        else if (hasWon && currentLevel < 4) { currentLevel++; resetLevel(); }
+        else if (player.jumpsUsed < player.maxJumps) { player.dy = JUMP_FORCE; player.jumpsUsed++; }
+    }
+});
+canvas.addEventListener('mousedown', () => { 
+    skinIdx = (skinIdx + 1) % skins.length; 
+    document.getElementById('skinName').innerText = ["Cyan","Pink","Yellow","Green","White"][skinIdx];
+    document.getElementById('skinName').style.color = skins[skinIdx];
+});
+
+resetLevel(); draw();
+</script>
+</body>
+</html>
